@@ -1,0 +1,189 @@
+{
+    "note": "V1 radar-only ablation: online Range-MAD sparse REA, range attention and 3D deformable attention",
+
+    "dataset": "kradar_radar_only",
+
+    "computing": {
+        "dtype": "float32",
+        "seed": 42,
+        "workers": 4,
+        "device": "cuda",
+        "ddp_find_unused_parameters": false,
+        "ddp_static_graph": true
+    },
+
+    "data": {
+        "camera": "",
+        "radar": "REA",
+        "revision": "rev1",
+        "validation_split": "test",
+        "radar_representation": "online_sparse",
+        "radar_sparse_threshold": 1.8,
+        "radar_sparse_min_points": 8000,
+        "radar_sparse_max_points": 64000,
+        "radar_sparse_mad_scale": 1.4826,
+        "radar_sparse_epsilon": 0.000001,
+        "lidar2radar_translation": [-2.54, 0.3, 0.7],
+        "num_classes": 2,
+        "categories": {
+            "Sedan": 0,
+            "Bus or Truck": -1,
+            "Motorcycle": -1,
+            "Bicycle": -1,
+            "Bicycle Group": -1,
+            "Pedestrian": -1,
+            "Pedestrian Group": -1,
+            "Background": -1
+        },
+        "fov": {
+            "x": [0.0, 72.0],
+            "y": [-6.4, 6.4],
+            "z": [-2.0, 6.0],
+            "azimuth": [-50, 50]
+        }
+    },
+
+    "train": {
+        "batch_size": 1,
+        "shuffle": true,
+        "epochs": 200,
+        "logging": "epoch",
+        "evaluating": 5,
+        "compute_train_metrics": false,
+        "checkpoint_interval": 5,
+        "optimizer": {
+            "name": "AdamW",
+            "lr": 0.0001
+        },
+        "anassigner": "HungarianAnassigner",
+        "criterion": "SetCriterion",
+        "losses": {
+            "class": "FocalLoss",
+            "center": "L1Loss",
+            "size": "L1Loss",
+            "angle": "L1Loss"
+        },
+        "loss_inputs": {
+            "class": ["class"],
+            "center": ["center"],
+            "size": ["size"],
+            "angle": ["angle"]
+        },
+        "loss_weights": {
+            "total_class": 1.0,
+            "center": 1.0,
+            "size": 1.0,
+            "angle": 1.0
+        },
+        "scheduler": {
+            "name": "ConstantLR",
+            "factor": 1.0
+        }
+    },
+
+    "model": {
+        "name": "rxf",
+        "inputs": [
+            "radar_rea"
+        ],
+        "skiplinks": {
+            "radar_rea": false
+        },
+        "backbones": {
+            "radar_rea": {
+                "name": "SparseREAEncoder",
+                "input_channels": 3,
+                "spatial_shape": [256, 37, 107],
+                "channels": [32, 64, 128, 256],
+                "range_embed_dim": 16,
+                "range_attention_layers": 2,
+                "range_attention_heads": 4,
+                "range_attention_ffn_dim": 32,
+                "range_attention_dropout": 0.1,
+                "range_latents": 8,
+                "output_channels": 16,
+                "backend": "spconv"
+            }
+        },
+        "necks": {
+            "radar_rea": {
+                "name": "FPN3D",
+                "with_cp": true,
+                "in_channels": [16, 16, 16, 16],
+                "out_channels": 16,
+                "norm_cfg": {
+                    "type": "GN",
+                    "num_groups": 4,
+                    "requires_grad": true
+                },
+                "conv_cfg": {
+                    "type": "Conv3d"
+                },
+                "act_cfg": {
+                    "type": "ReLU",
+                    "inplace": false
+                },
+                "upsample_cfg": {
+                    "mode": "trilinear"
+                }
+            }
+        },
+        "querent": {
+            "name": "data_agnostic_static_querent_radar_only",
+            "transformation": "spher2cart",
+            "resolution": [20, 20, 1],
+            "minimum": [0, -50, 0],
+            "maximum": [72, 50, 0]
+        },
+        "embeddings": {
+            "radar_rea": {
+                "name": "sinusoidal_embedding_3d",
+                "num_feats": 16,
+                "n_levels": 4,
+                "normalize": true
+            }
+        },
+        "fuser": {
+            "name": "IMPFusionRadarOnly",
+            "i_iter": 4,
+            "m_views": 1,
+            "d_model": 16,
+            "d_ffn": 32,
+            "n_queries": 400,
+            "n_levels": [4],
+            "n_heads": [4],
+            "n_points": [4],
+            "norm": true,
+            "dropout": 0.1,
+            "modality_dropout": 0.0,
+            "reduction": "mean",
+            "activation": "Mish"
+        },
+        "head": {
+            "name": "linear_detection_head",
+            "in_channels": 16,
+            "num_classes": 2,
+            "num_reg_layers": 3,
+            "num_cls_layers": 3
+        }
+    },
+
+    "evaluate": {
+        "name": "RadarOnlyEvaluator",
+        "logging": "epoch",
+        "compute_online_metrics": false,
+        "run_inference_benchmark": false,
+        "run_complexity_profile": false,
+        "inference_repetitions": 100,
+        "metrics": {
+            "mAP": "mAP3D",
+            "mGIoU": "mGIoU3D"
+        },
+        "exporter": {
+            "name": "kradar",
+            "conf_thrs": [0.0, 0.3, 0.5, 0.7, 0.9],
+            "max_detections": 100,
+            "single_pass_export": true
+        }
+    }
+}
